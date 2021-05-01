@@ -1,6 +1,7 @@
 package org.testcontainers.containers;
 
-import org.influxdb.InfluxDB;
+import com.influxdb.client.InfluxDBClient;
+import com.influxdb.client.domain.HealthCheck;
 import org.junit.ClassRule;
 import org.junit.Test;
 
@@ -22,10 +23,11 @@ public class InfluxDBContainerTest {
 
     @Test
     public void getNewInfluxDB() {
-        InfluxDB actual = influxDBContainer.getNewInfluxDB();
+        InfluxDBClient actual = influxDBContainer.getNewInfluxDB();
 
         assertThat(actual, notNullValue());
-        assertThat(actual.ping(), notNullValue());
+        assertThat(actual.health(), notNullValue());
+        assertThat(actual.health().getStatus(), is(HealthCheck.StatusEnum.PASS));
     }
 
     @Test

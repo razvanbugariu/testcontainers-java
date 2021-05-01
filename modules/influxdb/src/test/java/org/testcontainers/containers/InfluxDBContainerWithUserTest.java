@@ -1,72 +1,76 @@
 package org.testcontainers.containers;
 
-import org.influxdb.InfluxDB;
-import org.influxdb.dto.Point;
-import org.influxdb.dto.Query;
-import org.influxdb.dto.QueryResult;
+import com.influxdb.client.InfluxDBClient;
+import com.influxdb.client.QueryApi;
+import com.influxdb.client.WriteApi;
+import com.influxdb.client.domain.WritePrecision;
+import com.influxdb.client.write.Point;
+import com.influxdb.query.FluxRecord;
+import com.influxdb.query.FluxTable;
 import org.junit.Rule;
 import org.junit.Test;
 
-import java.util.concurrent.TimeUnit;
+import java.time.Instant;
+import java.util.List;
 
-import static org.hamcrest.CoreMatchers.hasItem;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.notNullValue;
-import static org.hamcrest.CoreMatchers.nullValue;
 import static org.junit.Assert.assertThat;
 
 public class InfluxDBContainerWithUserTest {
 
     private static final String TEST_VERSION = InfluxDBTestImages.INFLUXDB_TEST_IMAGE.getVersionPart();
-    private static final String DATABASE = "test";
-    private static final String USER = "test-user";
-    private static final String PASSWORD = "test-password";
+    private static final String BUCKET = "test-bucket";
+    private static final String ORGANIZATION = "test-organization";
+    private static final String ADMIN_TOKEN = "test-admin-token";
 
     @Rule
     public InfluxDBContainer<?> influxDBContainer = new InfluxDBContainer<>(InfluxDBTestImages.INFLUXDB_TEST_IMAGE)
-        .withDatabase(DATABASE)
-        .withUsername(USER)
-        .withPassword(PASSWORD);
+        .withBucket(BUCKET)
+        .withOrganization(ORGANIZATION)
+        .withAdminToken(ADMIN_TOKEN);
 
     @Test
     public void describeDatabases() {
-        InfluxDB actual = influxDBContainer.getNewInfluxDB();
+        InfluxDBClient actual = influxDBContainer.getNewInfluxDB();
 
         assertThat(actual, notNullValue());
-        assertThat(actual.describeDatabases(), hasItem(DATABASE));
+        assertThat(actual.getBucketsApi().findBucketByName(BUCKET), notNullValue());
     }
 
     @Test
     public void checkVersion() {
-        InfluxDB actual = influxDBContainer.getNewInfluxDB();
+        InfluxDBClient actual = influxDBContainer.getNewInfluxDB();
 
         assertThat(actual, notNullValue());
 
-        assertThat(actual.ping(), notNullValue());
-        assertThat(actual.ping().getVersion(), is(TEST_VERSION));
-
-        assertThat(actual.version(), is(TEST_VERSION));
+        assertThat(actual.health(), notNullValue());
+        assertThat(actual.health().getVersion(), is(TEST_VERSION));
     }
 
     @Test
     public void queryForWriteAndRead() {
-        InfluxDB influxDB = influxDBContainer.getNewInfluxDB();
+        InfluxDBClient influxDBClient = influxDBContainer.getNewInfluxDB();
+        Instant now = Instant.now();
+        try (WriteApi writeApi = influxDBClient.getWriteApi()) {
+            Point point = Point.measurement("cpu")
+                .time(now, WritePrecision.MS)
+                .addField("idle", 90L)
+                .addField("user", 9L)
+                .addField("system", 1L);
+            writeApi.writePoint(point);
+        }
 
-        Point point = Point.measurement("cpu")
-            .time(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
-            .addField("idle", 90L)
-            .addField("user", 9L)
-            .addField("system", 1L)
-            .build();
-        influxDB.write(point);
+        String flux = String.format("from(bucket:\"%s\") |> range(start: 0)", BUCKET);
 
-        Query query = new Query("SELECT idle FROM cpu", DATABASE);
-        QueryResult actual = influxDB.query(query);
+        QueryApi queryApi = influxDBClient.getQueryApi();
 
-        assertThat(actual, notNullValue());
-        assertThat(actual.getError(), nullValue());
-        assertThat(actual.getResults(), notNullValue());
-        assertThat(actual.getResults().size(), is(1));
+        List<FluxTable> result = queryApi.query(flux);
 
+        assertThat(result, notNullValue());
+        assertThat(result.size(), not(0));
+
+        influxDBClient.close();
     }
 }
